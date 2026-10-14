@@ -27,6 +27,7 @@ package hudson.model.labels;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +42,8 @@ import hudson.model.BuildListener;
 import hudson.model.FreeStyleBuild;
 import hudson.model.FreeStyleProject;
 import hudson.model.Label;
+import hudson.model.Node;
+import hudson.model.queue.QueueTaskFuture;
 import hudson.slaves.DumbSlave;
 import hudson.slaves.RetentionStrategy;
 import java.io.File;
@@ -49,6 +52,7 @@ import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.Future;
+import org.htmlunit.html.HtmlForm;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -146,6 +150,46 @@ class LabelExpressionTest {
         p.setAssignedLabel(j.jenkins.getLabel("!win"));
         b = j.buildAndAssertSuccess(p);
         assertSame(j.jenkins, b.getBuiltOn());
+    }
+
+    @Test
+    void negatedLabelMatchesAgentAfterExcludedLabelIsRemoved() throws Exception {
+        j.jenkins.setNumExecutors(0);
+        DumbSlave s = j.createOnlineSlave(j.jenkins.getLabel("win"));
+        FreeStyleProject p = j.createFreeStyleProject();
+        p.setAssignedLabel(j.jenkins.getLabel("!win"));
+        QueueTaskFuture<FreeStyleBuild> f = p.scheduleBuild2(0);
+        assertFalse(j.jenkins.getLabel("!win").contains(s));
+
+        s.setLabelString("linux");
+        j.jenkins.updateNode(s);
+
+        assertTrue(j.jenkins.getLabel("!win").contains(s), "!win should match the agent once it no longer has the win label");
+        assertSame(s, j.assertBuildStatusSuccess(f).getBuiltOn());
+    }
+
+    @Test
+    void negatedLabelStopsMatchingAgentThatGainsExcludedLabel() throws Exception {
+        DumbSlave s = j.createOnlineSlave(j.jenkins.getLabel("linux"));
+        assertTrue(j.jenkins.getLabel("!win").contains(s));
+
+        s.setLabelString("linux win");
+        j.jenkins.updateNode(s);
+
+        assertFalse(j.jenkins.getLabel("!win").contains(s), "!win should no longer match the agent once it has the win label");
+    }
+
+    @Test
+    void negatedLabelStopsMatchingAgentGivenExcludedLabelOnConfigurePage() throws Exception {
+        DumbSlave s = j.createOnlineSlave(j.jenkins.getLabel("linux"));
+        assertTrue(j.jenkins.getLabel("!win").contains(s));
+
+        HtmlForm form = j.createWebClient().goTo("computer/" + s.getNodeName() + "/configure").getFormByName("config");
+        form.getInputByName("_.labelString").setValue("linux win");
+        j.submit(form);
+
+        Node updated = j.jenkins.getNode(s.getNodeName());
+        assertFalse(j.jenkins.getLabel("!win").contains(updated), "!win should not match the agent once it has the win label");
     }
 
     /**
